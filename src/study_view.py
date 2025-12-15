@@ -1,11 +1,12 @@
-from datetime import datetime
-import math
 import base64
+import math
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt, QRectF, QUrl
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtGui import QPainter, QPen, QColor, QIcon
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -22,11 +23,39 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QDialog,
     QDialogButtonBox,
+    QSystemTrayIcon,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .data_store import DataStore
 from .theme import apply_panel_style, apply_primary_button, apply_secondary_button
+
+
+def base_assets_path() -> Path:
+    """Locate asset folder, supporting PyInstaller bundles."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
+
+
+class TrayNotifier:
+    """Simple system tray notifier for Windows (falls back silently elsewhere)."""
+
+    def __init__(self):
+        self.tray: Optional[QSystemTrayIcon] = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        icon_path = base_assets_path() / "timer-notification.png"
+        icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+        tray = QSystemTrayIcon(icon)
+        tray.setIcon(icon)
+        tray.setVisible(True)
+        self.tray = tray
+
+    def show(self, title: str, message: str):
+        if not self.tray:
+            return
+        self.tray.showMessage(title, message, self.tray.icon(), 5000)
 
 
 class TimerCircle(QWidget):
@@ -282,15 +311,17 @@ class StopwatchWidget(QWidget):
 
 
 class CountdownWidget(QWidget):
-    def __init__(self, label: str, default_minutes: int, on_complete):
+    def __init__(self, label: str, default_minutes: int, on_complete, notify_cb=None):
         super().__init__()
         self.total_seconds = max(1, default_minutes * 60)
         self.remaining_seconds = self.total_seconds
         self.on_complete = on_complete
+        self.notify_cb = notify_cb
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._tick)
 
+        self.label = label or f"{default_minutes} min"
         self.hours = default_minutes // 60
         self.minutes = default_minutes % 60
         self.seconds = 0
@@ -300,6 +331,9 @@ class CountdownWidget(QWidget):
 
         self.circle = TimerCircle()
         self.circle.update_state(self.total_seconds, self.remaining_seconds, self._format_time())
+        self.alarm_player: Optional[QMediaPlayer] = None
+        self.alarm_output: Optional[QAudioOutput] = None
+        self._load_alarm_sound()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -427,14 +461,17 @@ class CountdownWidget(QWidget):
             self._refresh_circle()
             self.on_complete(self.total_minutes)
             self._play_alarm()
+            if self.notify_cb:
+                self.notify_cb(self.label, self.total_minutes)
             return
         self._refresh_circle()
 
     def _load_alarm_sound(self):
         try:
-            base_path = Path(__file__).parent.parent
+            base_path = base_assets_path()
             sound_path = base_path / "Video Project.m4a"
             if not sound_path.exists():
+                self.alarm_player = None
                 return
             audio_output = QAudioOutput()
             player = QMediaPlayer()
@@ -499,6 +536,7 @@ class StudyView(QWidget):
         self.subject_id: Optional[int] = None
         self.done_sound: Optional[QMediaPlayer] = None
         self.done_audio_output: Optional[QAudioOutput] = None
+        self.notifier = TrayNotifier()
 
         self.chapter_list = QListWidget()
         self.note_editor = QTextEdit()
@@ -508,8 +546,8 @@ class StudyView(QWidget):
 
         self.progress_indicator = CircularProgress()
 
-        self.timer30 = CountdownWidget("", 30, self._log_session)
-        self.timer5 = CountdownWidget("", 5, lambda minutes: None)
+        self.timer30 = CountdownWidget("30 min focus", 30, self._log_session, self._notify_timer_done)
+        self.timer5 = CountdownWidget("5 min break", 5, lambda minutes: None, self._notify_timer_done)
         self.stopwatch = StopwatchWidget(self._log_stopwatch)
 
         self._ensure_done_sound()
@@ -607,6 +645,17 @@ class StudyView(QWidget):
         minutes = max(1, math.ceil(seconds / 60))
         self.store.log_session(self.subject_id, minutes, datetime.utcnow())
 
+    def _notify_timer_done(self, label: str, minutes: int):
+        if not self.notifier:
+            return
+        message = f"{label} finished."
+        # Clarify logging behavior for non-study timers
+        if label.lower().find("break") != -1:
+            message += " Break is over."
+        else:
+            message += f" Logged {minutes} min."
+        self.notifier.show("Study Tracker", message)
+
     def refresh_chapters(self):
         self.chapter_list.blockSignals(True)
         self.chapter_list.clear()
@@ -691,7 +740,7 @@ class StudyView(QWidget):
 
     def _ensure_done_sound(self):
         try:
-            base_path = Path(__file__).parent.parent
+            base_path = base_assets_path()
             sound_path = base_path / "11l-victory_beat-1749704521130-358766.mp3"
             if not sound_path.exists():
                 self.done_sound = None
