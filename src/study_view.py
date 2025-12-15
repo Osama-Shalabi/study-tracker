@@ -116,7 +116,7 @@ class TimerCircle(QWidget):
         painter.setPen(QColor("#e7ecf4"))
         font = painter.font()
         # Scale font with widget size for readability
-        size_hint = max(14, int(min(self.width(), self.height()) * 0.18))
+        size_hint = max(11, int(min(self.width(), self.height()) * 0.13))
         font.setPointSize(size_hint)
         font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
