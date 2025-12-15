@@ -504,7 +504,6 @@ class CountdownWidget(QWidget):
 
     def _play_alarm(self):
         if self.alarm_player:
-            self.alarm_player.setLoops(QMediaPlayer.Infinite)
             self.alarm_player.setPosition(0)
             self.alarm_player.play()
 
