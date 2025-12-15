@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt, QRectF, QUrl
-from PySide6.QtGui import QPainter, QPen, QColor, QIcon, QAction
+from PySide6.QtGui import QPainter, QPen, QColor, QIcon, QAction, QFont
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -114,8 +114,13 @@ class TimerCircle(QWidget):
 
         # text
         painter.setPen(QColor("#e7ecf4"))
-        painter.setFont(self.font())
-        painter.drawText(self.rect(), Qt.AlignCenter, self.display_text)
+        font = painter.font()
+        # Scale font with widget size for readability
+        size_hint = max(14, int(min(self.width(), self.height()) * 0.18))
+        font.setPointSize(size_hint)
+        font.setWeight(QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, self.display_text or "")
 
 
 class TimerEditDialog(QDialog):
@@ -497,6 +502,7 @@ class CountdownWidget(QWidget):
             player.setAudioOutput(audio_output)
             player.setSource(QUrl.fromLocalFile(str(sound_path)))
             audio_output.setVolume(0.4)
+            player.setLoops(1)
             self.alarm_player = player
             self.alarm_output = audio_output
         except Exception:
@@ -504,6 +510,7 @@ class CountdownWidget(QWidget):
 
     def _play_alarm(self):
         if self.alarm_player:
+            self.alarm_player.stop()
             self.alarm_player.setPosition(0)
             self.alarm_player.play()
 
