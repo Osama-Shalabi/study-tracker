@@ -135,13 +135,15 @@ class HomeView(QWidget):
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         labels = [l for l, _ in stats["bars"]]
-        values = [v for _, v in stats["bars"]]  # minutes
+        # Cap daily minutes at 600 (10 hours) for display consistency
+        values = [min(v, 600) for _, v in stats["bars"]]
         bars = ax.bar(labels, values, color="#7ac7ff")
         ax.set_facecolor("#0a0f1a")
         ax.tick_params(colors="#c3c9d6")
         ax.spines["bottom"].set_color("#c3c9d6")
         ax.spines["left"].set_color("#c3c9d6")
         ax.set_ylabel("Minutes", color="#c3c9d6")
+        ax.set_ylim(0, 600)
         for bar, val in zip(bars, values):
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
