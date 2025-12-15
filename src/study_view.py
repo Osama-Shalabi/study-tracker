@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt, QRectF, QUrl
-from PySide6.QtGui import QPainter, QPen, QColor, QIcon
+from PySide6.QtGui import QPainter, QPen, QColor, QIcon, QAction
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QSystemTrayIcon,
+    QMenu,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -43,6 +44,8 @@ class TrayNotifier:
 
     def __init__(self):
         self.tray: Optional[QSystemTrayIcon] = None
+        self.menu: Optional[QMenu] = None
+        self.current_stop_cb = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         icon_path = base_assets_path() / "timer-notification.png"
@@ -50,11 +53,27 @@ class TrayNotifier:
         tray = QSystemTrayIcon(icon)
         tray.setIcon(icon)
         tray.setVisible(True)
+        tray.messageClicked.connect(self._on_message_clicked)
         self.tray = tray
 
-    def show(self, title: str, message: str):
+    def _on_message_clicked(self):
+        if self.current_stop_cb:
+            self.current_stop_cb()
+
+    def show(self, title: str, message: str, stop_cb=None):
         if not self.tray:
             return
+        self.current_stop_cb = stop_cb
+        if stop_cb:
+            menu = QMenu()
+            act = QAction("Dismiss alarm")
+            act.triggered.connect(stop_cb)
+            menu.addAction(act)
+            self.tray.setContextMenu(menu)
+            self.menu = menu
+        else:
+            self.tray.setContextMenu(None)
+            self.menu = None
         self.tray.showMessage(title, message, self.tray.icon(), 5000)
 
 
@@ -462,7 +481,7 @@ class CountdownWidget(QWidget):
             self.on_complete(self.total_minutes)
             self._play_alarm()
             if self.notify_cb:
-                self.notify_cb(self.label, self.total_minutes)
+                self.notify_cb(self.label, self.total_minutes, self.stop_alarm)
             return
         self._refresh_circle()
 
@@ -485,8 +504,13 @@ class CountdownWidget(QWidget):
 
     def _play_alarm(self):
         if self.alarm_player:
+            self.alarm_player.setLoops(QMediaPlayer.Infinite)
             self.alarm_player.setPosition(0)
             self.alarm_player.play()
+
+    def stop_alarm(self):
+        if self.alarm_player:
+            self.alarm_player.stop()
 
 
 class CircularProgress(QWidget):
@@ -645,16 +669,15 @@ class StudyView(QWidget):
         minutes = max(1, math.ceil(seconds / 60))
         self.store.log_session(self.subject_id, minutes, datetime.utcnow())
 
-    def _notify_timer_done(self, label: str, minutes: int):
+    def _notify_timer_done(self, label: str, minutes: int, stop_cb):
         if not self.notifier:
             return
         message = f"{label} finished."
-        # Clarify logging behavior for non-study timers
         if label.lower().find("break") != -1:
             message += " Break is over."
         else:
             message += f" Logged {minutes} min."
-        self.notifier.show("Study Tracker", message)
+        self.notifier.show("Study Tracker", message, stop_cb)
 
     def refresh_chapters(self):
         self.chapter_list.blockSignals(True)
