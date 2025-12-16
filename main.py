@@ -18,6 +18,14 @@ def app_base_path() -> Path:
     return Path(__file__).parent
 
 
+def load_app_icon(base_path: Path) -> QIcon | None:
+    """Load the application icon if present."""
+    icon_path = base_path / "app-icon.png"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    return None
+
+
 class MainWindow(QStackedWidget):
     def __init__(self, store: DataStore):
         super().__init__()
@@ -51,6 +59,10 @@ def main():
     QLoggingCategory.setFilterRules("qt.multimedia.*=false")
 
     app = QApplication(sys.argv)
+    base_path = app_base_path()
+    app_icon = load_app_icon(base_path)
+    if app_icon:
+        app.setWindowIcon(app_icon)
     app.setStyleSheet(
         """
         * { font-family: 'Inter', 'SF Pro Display', 'Segoe UI', sans-serif; }
@@ -88,15 +100,14 @@ def main():
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """
     )
-    base_path = app_base_path()
+
     store = DataStore(base_path / "data.db")
     store.ensure_schema()
 
     window = MainWindow(store)
     window.setWindowTitle("Study Tracker")
-    icon_path = base_path / "dog.png"
-    if icon_path.exists():
-        window.setWindowIcon(QIcon(str(icon_path)))
+    if app_icon:
+        window.setWindowIcon(app_icon)
     window.resize(1100, 800)
     window.show()
     sys.exit(app.exec())

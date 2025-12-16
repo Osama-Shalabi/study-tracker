@@ -50,9 +50,14 @@ class TrayNotifier:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         icon_path = base_assets_path() / "timer-notification.png"
-        icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
-        tray = QSystemTrayIcon(icon)
-        tray.setIcon(icon)
+        fallback_icon_path = base_assets_path() / "app-icon.png"
+        icon = None
+        if icon_path.exists():
+            icon = QIcon(str(icon_path))
+        elif fallback_icon_path.exists():
+            icon = QIcon(str(fallback_icon_path))
+        tray = QSystemTrayIcon(icon or QIcon())
+        tray.setIcon(icon or QIcon())
         tray.setVisible(True)
         tray.messageClicked.connect(self._on_message_clicked)
         self.tray = tray
