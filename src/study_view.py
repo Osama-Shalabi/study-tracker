@@ -3,10 +3,10 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
-from PySide6.QtCore import QTimer, Qt, QRectF, QUrl
-from PySide6.QtGui import QPainter, QPen, QColor, QIcon, QAction, QFont
+from PySide6.QtCore import QTimer, Qt, QRectF, QUrl, Signal
+from PySide6.QtGui import QPainter, QPen, QColor, QIcon, QAction, QFont, QIntValidator
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QSystemTrayIcon,
     QMenu,
+    QAbstractItemView,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -148,14 +149,6 @@ class TimerEditDialog(QDialog):
         title.setStyleSheet("color:#f3f6ff; font-size:18px; font-weight:700;")
         header.addWidget(title)
         header.addStretch()
-        delete_btn = QPushButton("🗑")
-        delete_btn.setFixedSize(28, 28)
-        delete_btn.setStyleSheet(
-            "QPushButton { background:transparent; color:#d77; border:none; }"
-            "QPushButton:hover { color:#f99; }"
-        )
-        delete_btn.clicked.connect(self.reject)
-        header.addWidget(delete_btn)
         layout.addLayout(header)
 
         def arrow_btn(txt, cb):
@@ -189,13 +182,23 @@ class TimerEditDialog(QDialog):
         digits_row = QHBoxLayout(center_box)
         digits_row.setContentsMargins(12, 8, 12, 8)
         digits_row.setSpacing(8)
-        self.hour_label = QLabel()
-        self.min_label = QLabel()
-        self.sec_label = QLabel()
-        for lbl in (self.hour_label, self.min_label, self.sec_label):
-            lbl.setStyleSheet("color:#f3f6ff; font-size:28px; font-weight:800;")
-            digits_row.addWidget(lbl, alignment=Qt.AlignHCenter)
-            if lbl != self.sec_label:
+        validator = QIntValidator(0, 99, self)
+        self.hour_edit = QLineEdit()
+        self.min_edit = QLineEdit()
+        self.sec_edit = QLineEdit()
+        for field, edit in (("h", self.hour_edit), ("m", self.min_edit), ("s", self.sec_edit)):
+            edit.setValidator(validator)
+            edit.setMaxLength(2)
+            edit.setAlignment(Qt.AlignCenter)
+            edit.setFixedWidth(58)
+            edit.setStyleSheet(
+                "QLineEdit { color:#f3f6ff; font-size:28px; font-weight:800; background: rgba(0,0,0,0.12);"
+                "border:1px solid rgba(255,255,255,0.15); border-radius:10px; padding:6px; }"
+                "QLineEdit:focus { border-color:#7ac7ff; background: rgba(122,199,255,0.10); }"
+            )
+            edit.editingFinished.connect(lambda f=field, e=edit: self._commit_field(f, e))
+            digits_row.addWidget(edit, alignment=Qt.AlignHCenter)
+            if edit != self.sec_edit:
                 colon = QLabel(":")
                 colon.setStyleSheet("color:#f3f6ff; font-size:28px; font-weight:800;")
                 digits_row.addWidget(colon)
@@ -206,18 +209,6 @@ class TimerEditDialog(QDialog):
         bottom_row.addWidget(arrow_btn("▼", lambda: self._nudge("m", -1)), alignment=Qt.AlignHCenter)
         bottom_row.addWidget(arrow_btn("▼", lambda: self._nudge("s", -1)), alignment=Qt.AlignHCenter)
         layout.addLayout(bottom_row)
-
-        note_row = QHBoxLayout()
-        note_icon = QLabel("✎")
-        note_icon.setStyleSheet("color:#c3c9d6; font-size:14px;")
-        note_row.addWidget(note_icon, alignment=Qt.AlignVCenter)
-        self.note_input = QLineEdit()
-        self.note_input.setPlaceholderText("0")
-        self.note_input.setStyleSheet(
-            "QLineEdit { background: rgba(255,255,255,0.05); color:#e7ecf4; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 10px; }"
-        )
-        note_row.addWidget(self.note_input, stretch=1)
-        layout.addLayout(note_row)
 
         buttons = QHBoxLayout()
         save_btn = QPushButton("💾 Save")
@@ -242,12 +233,32 @@ class TimerEditDialog(QDialog):
         self._refresh_labels()
 
     def _refresh_labels(self):
-        self.hour_label.setText(f"{self.pending_hours:02d}")
-        self.min_label.setText(f"{self.pending_minutes:02d}")
-        self.sec_label.setText(f"{self.pending_seconds:02d}")
+        self.hour_edit.blockSignals(True)
+        self.min_edit.blockSignals(True)
+        self.sec_edit.blockSignals(True)
+        self.hour_edit.setText(f"{self.pending_hours:02d}")
+        self.min_edit.setText(f"{self.pending_minutes:02d}")
+        self.sec_edit.setText(f"{self.pending_seconds:02d}")
+        self.hour_edit.blockSignals(False)
+        self.min_edit.blockSignals(False)
+        self.sec_edit.blockSignals(False)
 
     def result_time(self):
         return self.pending_hours, self.pending_minutes, self.pending_seconds
+    
+    def _commit_field(self, field: str, edit: QLineEdit):
+        text = edit.text().strip()
+        val = int(text) if text.isdigit() else 0
+        if field == "h":
+            val = max(0, min(23, val))
+            self.pending_hours = val
+        elif field == "m":
+            val = max(0, min(59, val))
+            self.pending_minutes = val
+        elif field == "s":
+            val = max(0, min(59, val))
+            self.pending_seconds = val
+        self._refresh_labels()
 
 
 class StopwatchWidget(QWidget):
@@ -271,21 +282,24 @@ class StopwatchWidget(QWidget):
         btns = QHBoxLayout()
         btns.setSpacing(8)
         self.start_btn = QPushButton("▶")
-        self.start_btn.setFixedSize(40, 36)
+        self.start_btn.setFixedSize(46, 42)
         self.start_btn.clicked.connect(self.start)
         apply_primary_button(self.start_btn)
+        self.start_btn.setToolTip("Start stopwatch")
         btns.addWidget(self.start_btn)
 
         self.pause_btn = QPushButton("⏸")
-        self.pause_btn.setFixedSize(40, 36)
+        self.pause_btn.setFixedSize(46, 42)
         apply_secondary_button(self.pause_btn)
         self.pause_btn.clicked.connect(self.toggle_pause)
+        self.pause_btn.setToolTip("Pause/Resume")
         btns.addWidget(self.pause_btn)
 
         self.reset_btn = QPushButton("↺")
-        self.reset_btn.setFixedSize(40, 36)
+        self.reset_btn.setFixedSize(46, 42)
         apply_secondary_button(self.reset_btn)
         self.reset_btn.clicked.connect(self.reset)
+        self.reset_btn.setToolTip("Reset stopwatch")
         btns.addWidget(self.reset_btn)
 
         self.finish_btn = QPushButton("Finish")
@@ -368,40 +382,44 @@ class CountdownWidget(QWidget):
         controls.setSpacing(12)
         controls.addStretch()
         self.start_btn = QPushButton("▶")
-        self.start_btn.setFixedSize(48, 48)
+        self.start_btn.setFixedSize(52, 48)
         self.start_btn.setStyleSheet(
             "QPushButton { background:qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #7ac7ff, stop:1 #c792ff);"
-            "color:#0a0f1a; font-weight:800; border:none; border-radius:24px; padding:6px; }"
+            "color:#0a0f1a; font-weight:800; border:none; border-radius:14px; padding:10px; }"
             "QPushButton:hover { background:qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #8ed2ff, stop:1 #d4b3ff); }"
         )
         self.start_btn.clicked.connect(self.start)
+        self.start_btn.setToolTip("Start timer")
         controls.addWidget(self.start_btn)
 
         self.pause_btn = QPushButton("⏸")
-        self.pause_btn.setFixedSize(48, 48)
+        self.pause_btn.setFixedSize(52, 48)
         self.pause_btn.setStyleSheet(
             "QPushButton { background:rgba(255,255,255,0.07); color:#e7ecf4; border:1px solid rgba(122,199,255,0.28); border-radius:24px; }"
             "QPushButton:hover { border-color:#7ac7ff; color:#7ac7ff; }"
         )
         self.pause_btn.clicked.connect(self.toggle_pause)
+        self.pause_btn.setToolTip("Pause/Resume")
         controls.addWidget(self.pause_btn)
 
         self.reset_btn = QPushButton("↺")
-        self.reset_btn.setFixedSize(48, 48)
+        self.reset_btn.setFixedSize(52, 48)
         self.reset_btn.setStyleSheet(
             "QPushButton { background:rgba(255,255,255,0.07); color:#e7ecf4; border:1px solid rgba(122,199,255,0.28); border-radius:24px; }"
             "QPushButton:hover { border-color:#7ac7ff; color:#7ac7ff; }"
         )
         self.reset_btn.clicked.connect(self.reset)
+        self.reset_btn.setToolTip("Reset timer")
         controls.addWidget(self.reset_btn)
 
         edit_btn = QPushButton("✎")
-        edit_btn.setFixedSize(40, 40)
+        edit_btn.setFixedSize(46, 44)
         edit_btn.setStyleSheet(
             "QPushButton { background:rgba(255,255,255,0.06); color:#e7ecf4; border:1px solid rgba(255,255,255,0.12); border-radius:12px; }"
             "QPushButton:hover { border-color:#7ac7ff; color:#7ac7ff; }"
         )
         edit_btn.clicked.connect(self.open_editor)
+        edit_btn.setToolTip("Edit duration")
         controls.addWidget(edit_btn)
         controls.addStretch()
         root.addLayout(controls)
@@ -557,6 +575,29 @@ class CircularProgress(QWidget):
         painter.drawText(self.rect(), Qt.AlignCenter, f"{self._value}%")
 
 
+class ChapterListWidget(QListWidget):
+    """List widget that supports internal drag-and-drop reorder and emits new order."""
+
+    orderChanged = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        ordered_ids: List[int] = []
+        for i in range(self.count()):
+            cid = self.item(i).data(Qt.UserRole)
+            if cid is not None:
+                ordered_ids.append(int(cid))
+        self.orderChanged.emit(ordered_ids)
+
+
 class StudyView(QWidget):
     def __init__(self, store: DataStore, to_home: Callable[[], None], to_subjects: Callable[[], None]):
         super().__init__()
@@ -568,11 +609,12 @@ class StudyView(QWidget):
         self.done_audio_output: Optional[QAudioOutput] = None
         self.notifier = TrayNotifier()
 
-        self.chapter_list = QListWidget()
+        self.chapter_list = ChapterListWidget()
         self.note_editor = QTextEdit()
         self.note_editor.setPlaceholderText("Enter notes for the selected chapter...")
         self.note_editor.textChanged.connect(self._save_notes)
         self._editing_chapter_id: Optional[int] = None
+        self._loading_chapters = False
 
         self.progress_indicator = CircularProgress()
 
@@ -622,11 +664,29 @@ class StudyView(QWidget):
 
         self.chapter_list.itemSelectionChanged.connect(self._load_notes_for_selected)
         self.chapter_list.itemChanged.connect(self._toggle_done)
+        self.chapter_list.orderChanged.connect(self._persist_order)
+        self.chapter_list.setStyleSheet(
+            """
+            QListWidget { color:#f3f6ff; }
+            QListWidget::item { color:#f3f6ff; padding:4px 6px; }
+            QListWidget::item:selected { color:#f3f6ff; background: rgba(122,199,255,0.20); }
+            QListWidget QLineEdit {
+              color:#f3f6ff;
+              background: #0c1422;
+              border: 1px solid rgba(122,199,255,0.45);
+              border-radius: 6px;
+              padding:4px 6px;
+              selection-background-color: rgba(122,199,255,0.35);
+              selection-color:#0a0f1a;
+            }
+            """
+        )
         chapters_layout.addWidget(self.chapter_list)
 
         add_row = QHBoxLayout()
         self.chapter_input = QLineEdit()
         self.chapter_input.setPlaceholderText("Add chapter title")
+        self.chapter_input.returnPressed.connect(self._add_chapter)
         add_btn = QPushButton("Add")
         apply_primary_button(add_btn)
         add_btn.clicked.connect(self._add_chapter)
@@ -686,6 +746,7 @@ class StudyView(QWidget):
         self.notifier.show("Study Tracker", message, stop_cb)
 
     def refresh_chapters(self):
+        self._loading_chapters = True
         self.chapter_list.blockSignals(True)
         self.chapter_list.clear()
         for row in self.store.list_chapters(self.subject_id):
@@ -693,10 +754,12 @@ class StudyView(QWidget):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
             item.setCheckState(Qt.Checked if row["done"] else Qt.Unchecked)
             item.setData(Qt.UserRole, row["id"])
+            item.setForeground(QColor("#f3f6ff"))
             self.chapter_list.addItem(item)
         self.chapter_list.blockSignals(False)
         self.note_editor.clear()
         self._editing_chapter_id = None
+        self._loading_chapters = False
         self._update_progress()
 
     def _add_chapter(self):
@@ -714,6 +777,11 @@ class StudyView(QWidget):
         if done:
             self._play_done_sound()
         self._update_progress()
+
+    def _persist_order(self, ordered_ids: List[int]):
+        if self._loading_chapters or not self.subject_id:
+            return
+        self.store.reorder_chapters(self.subject_id, ordered_ids)
 
     def _load_notes_for_selected(self):
         items = self.chapter_list.selectedItems()

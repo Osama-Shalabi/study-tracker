@@ -42,19 +42,30 @@ class DataStore:
             );
             """
         )
+        # add position column for subjects if missing to support manual ordering
+        cur.execute("PRAGMA table_info(subjects)")
+        has_position = any(row[1] == "position" for row in cur.fetchall())
+        if not has_position:
+            cur.execute("ALTER TABLE subjects ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+        # backfill positions for existing records to preserve creation order
+        cur.execute("SELECT id FROM subjects WHERE position = 0 ORDER BY created_at DESC, id DESC")
+        rows = cur.fetchall()
+        for idx, row in enumerate(rows, start=1):
+            cur.execute("UPDATE subjects SET position = ? WHERE id = ?", (idx, row[0]))
         conn.commit()
         conn.close()
 
     # Subjects
     def list_subjects(self) -> List[sqlite3.Row]:
         with self._connect() as conn:
-            return conn.execute("SELECT * FROM subjects ORDER BY created_at DESC").fetchall()
+            return conn.execute("SELECT * FROM subjects ORDER BY position ASC, id ASC").fetchall()
 
     def create_subject(self, name: str, color: str) -> int:
         with self._connect() as conn:
+            max_pos = conn.execute("SELECT COALESCE(MAX(position),0) FROM subjects").fetchone()[0]
             cur = conn.execute(
-                "INSERT INTO subjects (name, color) VALUES (?, ?)",
-                (name.strip(), color.strip()),
+                "INSERT INTO subjects (name, color, position) VALUES (?, ?, ?)",
+                (name.strip(), color.strip(), max_pos + 1),
             )
             conn.commit()
             return cur.lastrowid
@@ -67,6 +78,13 @@ class DataStore:
     def rename_subject(self, subject_id: int, new_name: str):
         with self._connect() as conn:
             conn.execute("UPDATE subjects SET name = ? WHERE id = ?", (new_name.strip(), subject_id))
+            conn.commit()
+
+    def reorder_subjects(self, ordered_ids: List[int]):
+        """Persist new subject ordering."""
+        with self._connect() as conn:
+            for pos, subject_id in enumerate(ordered_ids, start=1):
+                conn.execute("UPDATE subjects SET position = ? WHERE id = ?", (pos, subject_id))
             conn.commit()
 
     # Sessions
@@ -164,4 +182,14 @@ class DataStore:
     def delete_chapter(self, chapter_id: int):
         with self._connect() as conn:
             conn.execute("DELETE FROM chapters WHERE id = ?", (chapter_id,))
+            conn.commit()
+
+    def reorder_chapters(self, subject_id: int, ordered_ids: List[int]):
+        """Persist chapter order based on drag-and-drop positions."""
+        with self._connect() as conn:
+            for position, chapter_id in enumerate(ordered_ids, start=1):
+                conn.execute(
+                    "UPDATE chapters SET position = ? WHERE id = ? AND subject_id = ?",
+                    (position, chapter_id, subject_id),
+                )
             conn.commit()

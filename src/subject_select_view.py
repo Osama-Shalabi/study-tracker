@@ -1,6 +1,6 @@
-from typing import Callable
+from typing import Callable, List
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -14,10 +14,34 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QMessageBox,
+    QAbstractItemView,
 )
 
 from .data_store import DataStore
 from .theme import apply_panel_style, apply_primary_button, apply_secondary_button
+
+
+class SubjectListWidget(QListWidget):
+    """List that supports internal drag-and-drop reordering."""
+
+    orderChanged = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        ordered_ids: List[int] = []
+        for i in range(self.count()):
+            sid = self.item(i).data(Qt.UserRole)
+            if sid is not None:
+                ordered_ids.append(int(sid))
+        self.orderChanged.emit(ordered_ids)
 
 
 class SubjectSelectView(QWidget):
@@ -32,7 +56,7 @@ class SubjectSelectView(QWidget):
         self.on_choose = on_choose
         self.to_home = to_home
 
-        self.list_widget = QListWidget()
+        self.list_widget = SubjectListWidget()
         self.list_widget.setStyleSheet(
             """
             QListWidget {
@@ -54,11 +78,13 @@ class SubjectSelectView(QWidget):
 
         self.name_input = QLineEdit()
         self.color = "#7ac7ff"
+        self._loading_subjects = False
 
         self._build_ui()
 
         self.list_widget.itemDoubleClicked.connect(self._choose_subject)
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
+        self.list_widget.orderChanged.connect(self._persist_order)
 
         self.refresh()
 
@@ -121,6 +147,7 @@ class SubjectSelectView(QWidget):
         root.addWidget(panel)
 
     def refresh(self):
+        self._loading_subjects = True
         self.list_widget.clear()
 
         for row in self.store.list_subjects():
@@ -157,6 +184,7 @@ class SubjectSelectView(QWidget):
 
         self._update_row_styles()
         self._prefill_from_selection()
+        self._loading_subjects = False
 
     def _update_row_styles(self):
         for i in range(self.list_widget.count()):
@@ -245,3 +273,9 @@ class SubjectSelectView(QWidget):
         subject_id = item.data(Qt.UserRole)
         if subject_id:
             self.on_choose(subject_id)
+
+    def _persist_order(self, ordered_ids: List[int]):
+        if self._loading_subjects:
+            return
+        self.store.reorder_subjects(ordered_ids)
+        self._update_row_styles()
